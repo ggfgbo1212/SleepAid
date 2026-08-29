@@ -1,0 +1,24 @@
+# ===== Keil MDK / uVision 构建产物 =====
+MDK-ARM/basic/
+MDK-ARM/build_log.txt
+MDK-ARM/build_utf8.txt
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/*.uvprojx.bak
+MDK-ARM/startup_stm32f407xx.lst
+MDK-ARM/DebugConfig/
+MDK-ARM/EventRecorderStub.scvd
+MDK-ARM/RTE/
+
+# ===== LVGL 桌面模拟器（GUI Guider lvgl-simulator）=====
+# 编译产物
+6_Middlewares/lvgl/SleepAid_UI/lvgl-simulator/build/
+# SDL2 预编译库（35MB，官网可重新下载）
+6_Middlewares/lvgl/SleepAid_UI/lvgl-simulator/SDL2/
+
+# ===== STM32CubeMX 生成元数据 =====
+.mxproject
+
+# ===== 通用 =====
+*.bak
+*.log
