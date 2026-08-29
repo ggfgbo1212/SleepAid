@@ -13,6 +13,7 @@
 #include "events_init.h"
 #include "widgets_init.h"
 #include "custom.h"
+#include "lvgl_action.h"   /* 控件事件回调（setup 末尾绑定本页控件） */
 
 
 void setup_scr_SettingsPage4CheckUpdate2(lv_ui *ui)
@@ -95,6 +96,10 @@ void setup_scr_SettingsPage4CheckUpdate2(lv_ui *ui)
 
 	//Update current screen layout.
 	lv_obj_update_layout(ui->SettingsPage4CheckUpdate2);
+
+	/* 本页控件事件绑定："确认"按钮点击 → 返回信息页（回调在 lvgl_action.c） */
+	lv_obj_add_event_cb(ui->SettingsPage4CheckUpdate2_setting_checkupdate2_confirm_btn,
+	                    settings_p4_checkupdate2_confirm_back, LV_EVENT_CLICKED, NULL);
 
 	
 }

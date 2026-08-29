@@ -33,6 +33,13 @@
 
 WiFiBtDevice * WIFIBTDev = NULL;
 
+/* MQTT 任务管理（避免硬删持锁任务导致 mqtt_mutex 永久锁死）：
+ * mqtt_thread      存放任务句柄，ThreadStart 每次创建时覆盖写入；
+ * mqtt_alive       mqtt 任务存活标志：任务启动置1、自杀前清0，供 wifi 任务判断旧任务是否退出；
+ * mqtt_quit        WiFi 掉线时 wifi 任务置1，mqtt 任务在 MQTTBase_Yield 返回（已解锁）后检查并自杀。 */
+static Thread mqtt_thread;
+static volatile int mqtt_alive = 0;
+static volatile int mqtt_quit = 0;
 
 /* ==================== LVGL 界面 ==================== */
 
@@ -100,10 +107,13 @@ static void DispTask(void *argument)
 
 static void mqtt_task(void *arg)
 {
+    (void)arg;
     /* connect to m2m.eclipse.org, subscribe to a topic, send and receive messages regularly every 1 sec */
     int count = 0;
     int rc = 0;
-    
+
+    mqtt_alive = 1;   /* 登记存活：wifi 任务据此知道本任务在跑，重连前要等它退出 */
+
     //1.MQTT 连接服务器初始化
     MQTTBase_Init();
     //2.MQTT 连接阿里云平台
@@ -136,20 +146,29 @@ static void mqtt_task(void *arg)
 	{
 //        if(count == 10)
 //        {
-//            MQTTOTA_GetFirmware(1, DeviceName);//              
+//            MQTTOTA_GetFirmware(1, DeviceName);//
 //        }
 //        if(count == 15)
 //        {
 //            MQTTOTA_GetFirmwareBin(1, 1024, 0);
 //        }
-            
-        //如果wifi断开，自身需要进行自杀，然后唤醒WiFi连接任务 TODO
-        
+
         rc = MQTTBase_Yield(1000);
         if(rc != 0)//断开云平台连接了
         {
-            
+            /* yield 出错继续循环；若 WiFi 掉线，下面的 mqtt_quit 检查会触发自杀 */
         }
+
+        //WiFi 掉线请求退出：此刻 MQTTBase_Yield 已返回并解锁，安全自杀
+        //（不能在外面硬删本任务——若删时正持有 mqtt_mutex，互斥锁会永久锁死）
+        if(mqtt_quit)
+        {
+            debugprintf("mqtt task self-delete\r\n");
+            mqtt_quit = 0;              /* 复位退出标志，避免下次误判 */
+            mqtt_alive = 0;             /* 清除存活标志，wifi 任务据此知道旧任务已退出 */
+            vTaskDelete(NULL);          /* 自杀 */
+        }
+
         vTaskDelay(1);
 	}
 }
@@ -167,6 +186,9 @@ static void wifi_auto_connect_task(void *arg)
     while(1)
     {
         debugprintf("wifi_auto_connect_task running\r\n");
+        
+        
+        
         if(0 == WIFIBTDev->dev_status)//wifi未连接状态
         {
             if(ESUCCESS == WIFIBTDev->WIFIConnect(WIFIBTDev, "man2", "12345678"))//连接WiFi成功
@@ -175,13 +197,40 @@ static void wifi_auto_connect_task(void *arg)
                 /* 发送"WiFi 已连接"信号量 → Info 页 tick 函数里 wifi_status_led 变绿 */
                 xSemaphoreGive(wifi_connected_sem);
 
-                //MQTT连接
-                Thread *mqtt_t = NULL;
-                int rc = ThreadStart(mqtt_t, mqtt_task, NULL);
-                if(rc != pdPASS)    debugprintf("mqtt task creat error\r\n");
-                else  vTaskSuspend(NULL);//挂起自己
+                //MQTT连接：先等旧 MQTT 任务退出（掉线时请求自杀，Yield 一轮 1s 内必退出），
+                //避免新旧两个任务同时操作同一个 client/sendbuf/readbuf
+                if(mqtt_alive)
+                {
+                    debugprintf("wait old mqtt task exit\r\n");
+                    uint8_t wait_cnt = 15;   /* 最多等 ~1.5s */
+                    while(wait_cnt-- && mqtt_alive)
+                        vTaskDelay(pdMS_TO_TICKS(100));
+                }
+                if(!mqtt_alive)
+                {
+                    mqtt_quit = 0;   /* 新任务从干净状态开始 */
+                    int rc = ThreadStart(&mqtt_thread, mqtt_task, NULL);
+                    if(rc != pdPASS)    debugprintf("mqtt task creat error\r\n");
+                }
+                else
+                {
+                    debugprintf("old mqtt task still alive, skip restart\r\n");
+                }
             }
         }
+        else if(1 == WIFIBTDev->dev_status)//wifi已连接状态
+        {
+            WIFIBTDev->WIFIStaStatus(WIFIBTDev, 200);//轮询更新wifi连接状态
+            
+            if(0 == WIFIBTDev->dev_status)//突然断开了
+            {
+                mqtt_quit = 1;   /* 请求 MQTT 任务在 Yield 返回（已解锁）后自杀；不能硬删持锁任务 */
+                /* 发送"WiFi 断开"信号量 → Info 页 tick 里 wifi/aliyun 两个状态 LED 变红 */
+                xSemaphoreGive(wifi_disconnected_sem);
+            }
+            
+        }
+        
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

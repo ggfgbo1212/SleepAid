@@ -53,11 +53,14 @@ void ui_tick(void);
 /* ==================== 页间信号量 ==================== */
 /* WiFi 已连接信号量（二值）：wifi_auto_connect_task 连接成功后 Give，
  * SettingsPage4Info 页 tick 函数 Take → wifi_status_led 变绿。
+ * WiFi 断开信号量（二值）：wifi_auto_connect_task 轮询发现掉线后 Give，
+ * SettingsPage4Info 页 tick 函数 Take → wifi/aliyun 两个状态 LED 变红。
  * 在 DispTask（UI 线程）里初始化，业务任务仅 Give、UI tick 仅 Take，
  * 所有 lv_* 调用始终保持在 UI 线程。 */
 void tickscreen_init(void);                    /* 创建各信号量（DispTask 里 setup 前调用） */
-extern SemaphoreHandle_t wifi_connected_sem;   /* WiFi 连接成功信号量 */
-extern SemaphoreHandle_t aliyun_connected_sem; /* 入云（阿里云 MQTT）连接成功信号量 */
+extern SemaphoreHandle_t wifi_connected_sem;     /* WiFi 连接成功信号量 */
+extern SemaphoreHandle_t aliyun_connected_sem;   /* 入云（阿里云 MQTT）连接成功信号量 */
+extern SemaphoreHandle_t wifi_disconnected_sem;  /* WiFi 断开信号量 */
 
 #ifdef __cplusplus
 }

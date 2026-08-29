@@ -46,9 +46,12 @@ typedef struct WiFiBtDev{
     int (*NetDisconnect)(struct WiFiBtDev *ptdev, unsigned int port);
     int (*Write)(struct WiFiBtDev *ptdev, unsigned int port, unsigned char *buf, unsigned int length);
     int (*Read)(struct WiFiBtDev *ptdev, unsigned int port, unsigned char *buf, unsigned int length);
-    
+    int (*WIFIStaStatus)(struct WiFiBtDev *ptdev, unsigned int timeout);   // 查询WiFi连接状态
 }WiFiBtDevice;
 
 WiFiBtDevice *GetWIFIBTDevice(void);
+
+//查询WiFi连接状态（发送 AT+STAINFO?，返回 +STAINFO:<status> 的数字，负数表示错误）
+int WiFiBTGetStaStatus(unsigned int timeout);
 
 #endif /* __DEV_WIFI_H */

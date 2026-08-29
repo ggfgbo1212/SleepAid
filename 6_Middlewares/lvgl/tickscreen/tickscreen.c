@@ -24,6 +24,9 @@ SemaphoreHandle_t wifi_connected_sem = NULL;
 /* 入云成功信号量（二值）：mqtt_task 连接阿里云成功后 Give，Info 页 Take → aliyun_status_led 变绿 */
 SemaphoreHandle_t aliyun_connected_sem = NULL;
 
+/* WiFi 断开信号量（二值）：wifi_auto_connect_task 轮询发现掉线后 Give，Info 页 Take → 两个状态 LED 变红 */
+SemaphoreHandle_t wifi_disconnected_sem = NULL;
+
 void tickscreen_init(void)
 {
     if(NULL == wifi_connected_sem)
@@ -35,12 +38,28 @@ void tickscreen_init(void)
         aliyun_connected_sem = xSemaphoreCreateBinary();
     if(NULL == aliyun_connected_sem)
         debugprintf("aliyun_connected_sem create failed\r\n");
+
+    if(NULL == wifi_disconnected_sem)
+        wifi_disconnected_sem = xSemaphoreCreateBinary();
+    if(NULL == wifi_disconnected_sem)
+        debugprintf("wifi_disconnected_sem create failed\r\n");
 }
 
 /* ==================== 各页面周期循环函数（在此填写页面逻辑） ==================== */
 
 void tick_screen_SettingsPage4Info(void)
 {
+    /* WiFi 断开信号量 → 两个状态 LED 变红（WiFi 掉线，云平台随之失联；收到即处理一次）。
+     * 放在"变绿"之前：若在别的页面期间先断开后重连，断开/连接两个信号量会同时挂起，
+     * 先红后绿 → 最终以"当前已连接"为准，避免陈旧的断开信号把已恢复的 LED 又刷红。 */
+    if(NULL != wifi_disconnected_sem && pdTRUE == xSemaphoreTake(wifi_disconnected_sem, 0))
+    {
+        lv_led_set_color(guider_ui.SettingsPage4Info_wifi_status_led,
+                         lv_palette_main(LV_PALETTE_RED));
+        lv_led_set_color(guider_ui.SettingsPage4Info_aliyun_status_led,
+                         lv_palette_main(LV_PALETTE_RED));
+    }
+
     /* WiFi 已连接信号量 → WiFi 状态 LED 变绿（非阻塞 Take，收到即处理一次） */
     if(NULL != wifi_connected_sem && pdTRUE == xSemaphoreTake(wifi_connected_sem, 0))
     {

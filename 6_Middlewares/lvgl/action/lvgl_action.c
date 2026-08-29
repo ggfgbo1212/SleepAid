@@ -95,4 +95,21 @@ void settings_p4_info_check_update(lv_event_t *e)
     }
 }
 
+/* settings_p4_checkupdate2_confirm_back：CheckUpdate2"确认"按钮点击 → 返回信息页 */
+void settings_p4_checkupdate2_confirm_back(lv_event_t *e)
+{
+    (void)e;
+    /* TODO: 返回 SettingsPage4Info 页面 */
+    if(NULL == guider_ui.SettingsPage4Info)
+        setup_scr_SettingsPage4Info(&guider_ui);
+    lv_scr_load(guider_ui.SettingsPage4Info);
+}
+
+/* settings_p4_checkupdate3_confirm_upgrade：CheckUpdate3"立即升级"按钮点击 → 立即升级 */
+void settings_p4_checkupdate3_confirm_upgrade(lv_event_t *e)
+{
+    (void)e;
+    /* TODO: 立即升级 */
+}
+
 

@@ -30,6 +30,7 @@ static int WifiBT_NetConnect(struct WiFiBtDev *ptdev, unsigned char type, const 
 static int WifiBT_NetDisconnect(struct WiFiBtDev *ptdev, unsigned int port);
 static int WifiBT_Write(struct WiFiBtDev *ptdev, unsigned int port, unsigned char *buf, unsigned int length);
 static int WifiBT_Read(struct WiFiBtDev *ptdev, unsigned int port, unsigned char *buf, unsigned int length);
+static int WifiBT_WIFIStaStatus(struct WiFiBtDev *ptdev, unsigned int timeout);
 static int WiFiBTReadFromBuffer(struct WiFiBtDev *ptdev, unsigned int port, unsigned char *buf, unsigned int length);
 
 struct UARTDev* pUart = NULL;//wifi专用串口
@@ -47,8 +48,9 @@ WiFiBtDevice gWiFiBtDevice = {
     .NetConnect = WifiBT_NetConnect,
     .NetDisconnect = WifiBT_NetDisconnect,
     .Write = WifiBT_Write,
-    .Read = WiFiBTReadFromBuffer
-    
+    .Read = WiFiBTReadFromBuffer,
+    .WIFIStaStatus = WifiBT_WIFIStaStatus
+
 };
 
 WiFiBtDevice *GetWIFIBTDevice(void)
@@ -432,6 +434,90 @@ static int WiFiBTSetReceiveMode(unsigned char mode)
     printf("%s\r\n", pRxBuffer->info.pHead);
     
     return ret;
+}
+
+/**
+ * @brief 查询WiFi连接状态（发送 AT+STAINFO?，只取 +STAINFO:<status>）
+ *
+ * 芯片应答示例：
+ *   +STAINFO:3
+ *   SSID:test
+ *   Password:123456789
+ *   e1:f9:8a:aa:fc:4f,WPA/WPA2 TKIP,b2:e3:41:c2:b3:42,5,192.168.3.125,192.168.3.1
+ *   OK
+ *
+ * @param timeout 等待应答超时时间（ms）
+ * @return 0-4 连接状态；<0 错误（-ENODEV/-EIO）
+ *   0-没有连接wifi 1-正在连接wifi或重连中 2-已连接wifi未获取IP
+ *   3-已连接wifi并获取到IP 4-wifi连接失败（超过重连次数）
+ *
+ * 成功时会把 gWiFiBtDevice.dev_status 同步为：status==3 置 1，其余状态均置 0。
+ */
+int WiFiBTGetStaStatus(unsigned int timeout)
+{
+    if(NULL == pUart)       return -ENODEV;
+    if(NULL == pRxBuffer)   return -ENODEV;
+
+    //先清空buffer，再发送查询指令
+    char cmd[] = "AT+STAINFO?\r\n";
+    int ret = pRxBuffer->Clear(pRxBuffer);
+    if(ESUCCESS != ret) return ret;
+    ret = pUart->Write(pUart, (unsigned char *)cmd, strlen(cmd));
+    if(strlen(cmd) != ret) return ret;
+
+    //逐字节读取应答，拿到 +STAINFO:<数字> 即可返回
+    char buf[32] = {0};
+    unsigned int i = 0;
+    while(timeout && i < sizeof(buf)-1)
+    {
+        unsigned char ch;
+        ret = pRxBuffer->Read(pRxBuffer, &ch, 1);
+        if(ret == 1)
+        {
+            buf[i++] = (char)ch;
+            buf[i] = '\0';
+
+            //找到 +STAINFO: 后面跟着数字就解析返回
+            char *p = strstr(buf, "+STAINFO:");
+            if(p)
+            {
+                p += strlen("+STAINFO:");
+                if(*p >= '0' && *p <= '9')
+                {
+                    int status = 0;
+                    while(*p >= '0' && *p <= '9')
+                    {
+                        status = status * 10 + (*p - '0');
+                        p++;
+                    }
+                    //同步到设备结构体：只有"已连接并获取到IP"(3)才视为连接(1)，其余(0-2,4)均视为未连接(0)
+                    gWiFiBtDevice.dev_status = (status == 3) ? 1 : 0;
+                    return status;
+                }
+            }
+            if(strstr(buf, "ERR"))  return -EIO;    //芯片报错
+        }
+        else
+        {
+            timeout--;
+            HAL_Delay(1);
+        }
+    }
+
+    return -EIO;    //超时没收到有效状态
+}
+
+/**
+ * @brief 结构体成员版：查询WiFi连接状态（包装 WiFiBTGetStaStatus）
+ *
+ * @param ptdev   wifi设备对象
+ * @param timeout 等待应答超时时间（ms）
+ * @return 0-4 连接状态；<0 错误
+ */
+static int WifiBT_WIFIStaStatus(struct WiFiBtDev *ptdev, unsigned int timeout)
+{
+    if(NULL == ptdev)   return -EINVAL;
+    return WiFiBTGetStaStatus(timeout);
 }
 
 
