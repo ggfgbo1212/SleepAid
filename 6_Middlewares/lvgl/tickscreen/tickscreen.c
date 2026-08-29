@@ -1,4 +1,4 @@
-﻿/*
+/*
  * tickscreen.c
  * 每页 tick 循环函数 + 分发。
  *

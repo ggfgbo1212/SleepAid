@@ -26,22 +26,73 @@
 #include "mqtt_base.h"
 #include "mqtt_ota_ali.h"
 
+#include "FreeRTOS.h"
+#include "task.h"   /* xTaskCreate / vTaskDelay / vTaskDelete */
+
+
 /* 全局 UI 对象：各屏控件句柄集中存放，外部模块通过 extern 访问 */
 lv_ui guider_ui;
+
+/* 检查更新任务：主动查询是否有新固件可升级，循环判断结果后跳转对应页面。
+ * 优先级取 3（低于 DispTask 的 4），本任务只在 DispTask 阻塞 vTaskDelay 时被调度，
+ * 此时调 lv_scr_load 不会与 lv_timer_handler 的渲染冲突。 */
+static void check_update_task(void *arg)
+{
+    (void)arg;
+
+    //清掉上次查询的结果，避免拿旧值误判，重新等新回包
+    GetUpgradeInfo()->isGetUpgrade = 0;
+
+    //主动查询是否有新固件可升级
+    MQTTOTA_GetFirmware(1, DeviceName);
+
+    while(1)
+    {
+        //循环判断服务器应答（GetUpgradeMsgHandler 解析回包后填 isGetUpgrade）
+        UpgradeInfo *temp = GetUpgradeInfo();
+        
+        if(temp->isGetUpgrade == 2)//不可升级
+        {
+            temp->isGetUpgrade = 0;
+            //跳转页面-SettingsPage4CheckUpdate2
+            if(NULL == guider_ui.SettingsPage4CheckUpdate2)
+                setup_scr_SettingsPage4CheckUpdate2(&guider_ui);
+            lv_scr_load(guider_ui.SettingsPage4CheckUpdate2);
+            vTaskDelete(NULL);
+        }
+        else if(temp->isGetUpgrade == 1)//可升级
+        {
+            temp->isGetUpgrade = 0;
+            //跳转页面-SettingsPage4CheckUpdate3
+            if(NULL == guider_ui.SettingsPage4CheckUpdate3)
+                setup_scr_SettingsPage4CheckUpdate3(&guider_ui);
+            lv_scr_load(guider_ui.SettingsPage4CheckUpdate3);
+            vTaskDelete(NULL);
+        }
+        
+        printf("check_update_task running\r\n");
+        vTaskDelay(pdMS_TO_TICKS(200));//回包还没到，等一会儿再查
+    }
+
+    vTaskDelete(NULL);//任务自杀
+}
 
 /* settings_p4_info_check_update：信息页"检查更新"按钮点击 → 检查是否有新版本（占位打印） */
 void settings_p4_info_check_update(lv_event_t *e)
 {
     (void)e;
     debugprintf("123456789\r\n");
-    
-    //主动查询是否有新固件可升级
-    MQTTOTA_GetFirmware(1, DeviceName);
+
+    //跳转到页面——SettingsPage4CheckUpdate1（检查中页面）
+    if(NULL == guider_ui.SettingsPage4CheckUpdate1)
+        setup_scr_SettingsPage4CheckUpdate1(&guider_ui);
+    lv_scr_load(guider_ui.SettingsPage4CheckUpdate1);
+
+    //创建检查更新任务：任务里查询固件版本并循环判断结果，跳转对应页面
+    if(pdPASS != xTaskCreate(check_update_task, "CheckUpdate", 1024, NULL, 3, NULL))
+    {
+        debugprintf("check_update task create failed\r\n");
+    }
 }
 
-/* settings_p4_info_switch_page：CheckUpdate2"确认"按钮点击 → 切换到信息页（占位打印） */
-void settings_p4_info_switch_page(lv_event_t *e)
-{
-    (void)e;
-    debugprintf("hello LVGL\r\n");
-}
+
