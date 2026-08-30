@@ -36,6 +36,9 @@ void settings_p4_checkupdate2_confirm_back(lv_event_t *e);
 /* CheckUpdate3"立即升级"按钮点击 → 立即升级 */
 void settings_p4_checkupdate3_confirm_upgrade(lv_event_t *e);
 
+/* UpdateCplt"确认重启"按钮点击 → 确认重启跳转（内容待补充） */
+void settings_updatecplt_confirm_btn_event(lv_event_t *e);
+
 /* CheckUpdate2"确认"按钮点击 → 切换到信息页 */
 void settings_p4_info_switch_page(lv_event_t *e);
 

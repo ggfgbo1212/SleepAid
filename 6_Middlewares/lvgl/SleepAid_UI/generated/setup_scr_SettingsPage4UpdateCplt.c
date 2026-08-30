@@ -13,6 +13,7 @@
 #include "events_init.h"
 #include "widgets_init.h"
 #include "custom.h"
+#include "lvgl_action.h"   /* 控件事件回调（setup 末尾绑定本页控件） */
 
 
 void setup_scr_SettingsPage4UpdateCplt(lv_ui *ui)
@@ -63,5 +64,9 @@ void setup_scr_SettingsPage4UpdateCplt(lv_ui *ui)
 	//Update current screen layout.
 	lv_obj_update_layout(ui->SettingsPage4UpdateCplt);
 
-	
+	//Bind the "确认重启" button click event
+	lv_obj_add_event_cb(ui->SettingsPage4UpdateCplt_settings_updatecplt_confirm_btn,
+	                    settings_updatecplt_confirm_btn_event, LV_EVENT_CLICKED, NULL);
+
+
 }

@@ -80,9 +80,9 @@
             <nStopB2X>0</nStopB2X>
           </BeforeMake>
           <AfterMake>
-            <RunUserProg1>0</RunUserProg1>
+            <RunUserProg1>1</RunUserProg1>
             <RunUserProg2>0</RunUserProg2>
-            <UserProg1Name></UserProg1Name>
+            <UserProg1Name>$K\ARM\ARMCC\bin\fromelf.exe --bin --output=bin/@L.bin !L</UserProg1Name>
             <UserProg2Name></UserProg2Name>
             <UserProg1Dos16Mode>0</UserProg1Dos16Mode>
             <UserProg2Dos16Mode>0</UserProg2Dos16Mode>
@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../1_Appcations;../2_Devices;../3_ModuleDrivers;../4_include;../5_libs;../2_Devices/w25q;../2_Devices/st7789;../2_Devices/touch;../6_Middlewares/cjon;../2_Devices/wifi;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTPacket/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src/FreeRTOS;../6_Middlewares/lvgl/action;../6_Middlewares/lvgl/tickscreen;../6_Middlewares/lvgl/SleepAid_UI/lvgl;../6_Middlewares/lvgl/SleepAid_UI/custom;../6_Middlewares/lvgl/SleepAid_UI/generated;../6_Middlewares/lvgl/SleepAid_UI/generated/guider_fonts;../6_Middlewares/lvgl/SleepAid_UI</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../1_Appcations;../2_Devices;../3_ModuleDrivers;../4_include;../5_libs;../2_Devices/w25q;../2_Devices/st7789;../2_Devices/touch;../6_Middlewares/cjon;../6_Middlewares/MD5;../2_Devices/wifi;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTPacket/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src/FreeRTOS;../6_Middlewares/lvgl/action;../6_Middlewares/lvgl/tickscreen;../6_Middlewares/lvgl/SleepAid_UI/lvgl;../6_Middlewares/lvgl/SleepAid_UI/custom;../6_Middlewares/lvgl/SleepAid_UI/generated;../6_Middlewares/lvgl/SleepAid_UI/generated/guider_fonts;../6_Middlewares/lvgl/SleepAid_UI;..\6_Middlewares\MD5</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -402,6 +402,11 @@
               <FileName>mqtt_ota_ali.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\1_Appcations\mqtt_ota_ali.c</FilePath>
+            </File>
+            <File>
+              <FileName>iap.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\1_Appcations\iap.c</FilePath>
             </File>
           </Files>
         </Group>
@@ -582,6 +587,16 @@
               <FileName>cJSON.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\6_Middlewares\cjon\cJSON.c</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>6_Middlewares/md5</GroupName>
+          <Files>
+            <File>
+              <FileName>md5.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\6_Middlewares\MD5\md5.c</FilePath>
             </File>
           </Files>
         </Group>

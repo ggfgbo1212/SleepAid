@@ -30,6 +30,7 @@
 #include "task.h"
 #include "timers.h"
 
+#include "iap.h"
 
 WiFiBtDevice * WIFIBTDev = NULL;
 
@@ -144,15 +145,6 @@ static void mqtt_task(void *arg)
     
 	while (++count)
 	{
-//        if(count == 10)
-//        {
-//            MQTTOTA_GetFirmware(1, DeviceName);//
-//        }
-//        if(count == 15)
-//        {
-//            MQTTOTA_GetFirmwareBin(1, 1024, 0);
-//        }
-
         rc = MQTTBase_Yield(1000);
         if(rc != 0)//断开云平台连接了
         {
@@ -186,9 +178,7 @@ static void wifi_auto_connect_task(void *arg)
     while(1)
     {
         debugprintf("wifi_auto_connect_task running\r\n");
-        
-        
-        
+
         if(0 == WIFIBTDev->dev_status)//wifi未连接状态
         {
             if(ESUCCESS == WIFIBTDev->WIFIConnect(WIFIBTDev, "man2", "12345678"))//连接WiFi成功
@@ -244,29 +234,32 @@ void app_test()
 
 
 
-    struct GPIODev* GPIODev = GPIODev_Find("LED1");
-    if(GPIODev != NULL)
-    {
-        GPIODev->Init(GPIODev);
-        GPIODev->Write(GPIODev, 1);
-    }
-    
-    struct GPIODev* GPIODev1 = GPIODev_Find("LED2");
-    if(GPIODev1 != NULL)
-    {
-        GPIODev1->Init(GPIODev1);
-        GPIODev1->Write(GPIODev1, 1);
-    }
-    
-    struct GPIODev* GPIODev2 = GPIODev_Find("LED3");
-    if(GPIODev2 != NULL)
-    {
-        GPIODev2->Init(GPIODev2);
-        GPIODev2->Write(GPIODev2, 1);
-    }
-
-     
-     
+//    struct GPIODev* GPIODev = GPIODev_Find("LED1");
+//    if(GPIODev != NULL)
+//    {
+//        GPIODev->Init(GPIODev);
+//        GPIODev->Write(GPIODev, 1);
+//    }
+//    
+//    struct GPIODev* GPIODev1 = GPIODev_Find("LED2");
+//    if(GPIODev1 != NULL)
+//    {
+//        GPIODev1->Init(GPIODev1);
+//        GPIODev1->Write(GPIODev1, 1);
+//    }
+//    
+//    struct GPIODev* GPIODev2 = GPIODev_Find("LED3");
+//    if(GPIODev2 != NULL)
+//    {
+//        GPIODev2->Init(GPIODev2);
+//        GPIODev2->Write(GPIODev2, 1);
+//    }
+//     debugprintf("ready\r\n");
+//     jump_to_application(0x08064000);
+//     while(1)
+//     {
+//         
+//     }
 
 
 
