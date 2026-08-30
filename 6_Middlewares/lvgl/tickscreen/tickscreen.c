@@ -27,6 +27,11 @@ SemaphoreHandle_t aliyun_connected_sem = NULL;
 /* WiFi 断开信号量（二值）：wifi_auto_connect_task 轮询发现掉线后 Give，Info 页 Take → 两个状态 LED 变红 */
 SemaphoreHandle_t wifi_disconnected_sem = NULL;
 
+/* 检查更新结果队列（队列项：uint8_t，1=可升级 / 2=不可升级）：
+ * check_update_task（业务线程）检测到 isGetUpgrade 后 xQueueSend 发结果，
+ * SettingsPage4CheckUpdate1 页 tick（UI 线程）xQueueReceive 接收并按值跳页。 */
+QueueHandle_t g_update_result_q = NULL;
+
 void tickscreen_init(void)
 {
     if(NULL == wifi_connected_sem)
@@ -43,6 +48,11 @@ void tickscreen_init(void)
         wifi_disconnected_sem = xSemaphoreCreateBinary();
     if(NULL == wifi_disconnected_sem)
         debugprintf("wifi_disconnected_sem create failed\r\n");
+
+    if(NULL == g_update_result_q)
+        g_update_result_q = xQueueCreate(4, sizeof(uint8_t));   /* 深度4足够：一次检查只发一条结果 */
+    if(NULL == g_update_result_q)
+        debugprintf("update_result_q create failed\r\n");
 }
 
 /* ==================== 各页面周期循环函数（在此填写页面逻辑） ==================== */
@@ -103,7 +113,24 @@ void tick_screen_SettingsPage4Info(void)
 
 void tick_screen_SettingsPage4CheckUpdate1(void)
 {
-    /* 检查更新页1（正在检查中）：例如检查结果出来后跳转页面 */
+    /* 检查更新页1（正在检查中）：接收 check_update_task 发来的结果队列，按值跳转页面。
+     * 本函数跑在 UI 线程（DispTask），此时调 lv_scr_load/setup_scr 不会与渲染冲突。 */
+    uint8_t result = 0;
+    if(NULL != g_update_result_q && pdTRUE == xQueueReceive(g_update_result_q, &result, 0))
+    {
+        if(1 == result)    /* 可升级 → 跳 CheckUpdate3（发现新版本） */
+        {
+            if(NULL == guider_ui.SettingsPage4CheckUpdate3)
+                setup_scr_SettingsPage4CheckUpdate3(&guider_ui);
+            lv_scr_load(guider_ui.SettingsPage4CheckUpdate3);
+        }
+        else if(2 == result)   /* 不可升级 → 跳 CheckUpdate2（已是最新版本） */
+        {
+            if(NULL == guider_ui.SettingsPage4CheckUpdate2)
+                setup_scr_SettingsPage4CheckUpdate2(&guider_ui);
+            lv_scr_load(guider_ui.SettingsPage4CheckUpdate2);
+        }
+    }
 }
 
 void tick_screen_SettingsPage4CheckUpdate2(void)

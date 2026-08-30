@@ -32,15 +32,18 @@
 #include "drv_flash.h"/* FlashDrvInit / FlashDrvErase / FlashDrvWrite */
 
 #include "FreeRTOS.h"
-#include "task.h"   /* xTaskCreate / vTaskDelay / vTaskDelete */
+#include "task.h"      /* xTaskCreate / vTaskDelay / vTaskDelete */
+#include "queue.h"     /* xQueueSend：检查更新结果发到 UI 线程队列 */
+#include "tickscreen.h"/* g_update_result_q：检查更新结果队列 */
 #include "iap.h"
 
 /* 全局 UI 对象：各屏控件句柄集中存放，外部模块通过 extern 访问 */
 lv_ui guider_ui;
 
-/* 检查更新任务：主动查询是否有新固件可升级，循环判断结果后跳转对应页面。
- * 优先级取 3（低于 DispTask 的 4），本任务只在 DispTask 阻塞 vTaskDelay 时被调度，
- * 此时调 lv_scr_load 不会与 lv_timer_handler 的渲染冲突。 */
+/* 检查更新任务：主动查询是否有新固件可升级，循环判断结果。
+ * 本任务不直接调 LVGL（LVGL 非线程安全）：检测到 isGetUpgrade 后把结果
+ * (1可升级/2不可升级)发进 g_update_result_q 队列，由 UI 线程
+ * （SettingsPage4CheckUpdate1 页 tick）接收并按值 lv_scr_load 跳转页面。 */
 static void check_update_task(void *arg)
 {
     (void)arg;
@@ -59,19 +62,21 @@ static void check_update_task(void *arg)
         if(temp->isGetUpgrade == 2)//不可升级
         {
             temp->isGetUpgrade = 0;
-            //跳转页面-SettingsPage4CheckUpdate2
-            if(NULL == guider_ui.SettingsPage4CheckUpdate2)
-                setup_scr_SettingsPage4CheckUpdate2(&guider_ui);
-            lv_scr_load(guider_ui.SettingsPage4CheckUpdate2);
+            /* 不再直接调 LVGL：把结果(2=不可升级)发进队列交给 UI 线程，
+             * CheckUpdate1 页 tick 接收后跳转 SettingsPage4CheckUpdate2。
+             * 目的：LVGL 非线程安全，跨线程通信只走队列，lv_scr_load/setup_scr 留在 UI 线程。 */
+            uint8_t result = 2;
+            if(NULL != g_update_result_q)
+                xQueueSend(g_update_result_q, &result, 0);
             vTaskDelete(NULL);
         }
         else if(temp->isGetUpgrade == 1)//可升级
         {
             temp->isGetUpgrade = 0;
-            //跳转页面-SettingsPage4CheckUpdate3
-            if(NULL == guider_ui.SettingsPage4CheckUpdate3)
-                setup_scr_SettingsPage4CheckUpdate3(&guider_ui);
-            lv_scr_load(guider_ui.SettingsPage4CheckUpdate3);
+            /* 结果(1=可升级)发进队列，UI 线程跳转 SettingsPage4CheckUpdate3 */
+            uint8_t result = 1;
+            if(NULL != g_update_result_q)
+                xQueueSend(g_update_result_q, &result, 0);
             vTaskDelete(NULL);
         }
         

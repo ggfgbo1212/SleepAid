@@ -62,6 +62,12 @@ extern SemaphoreHandle_t wifi_connected_sem;     /* WiFi 连接成功信号量 *
 extern SemaphoreHandle_t aliyun_connected_sem;   /* 入云（阿里云 MQTT）连接成功信号量 */
 extern SemaphoreHandle_t wifi_disconnected_sem;  /* WiFi 断开信号量 */
 
+/* 检查更新结果队列：业务线程（check_update_task）检测到 isGetUpgrade 后把结果发进队列，
+ * SettingsPage4CheckUpdate1 页 tick 函数（UI 线程）接收后按值跳转页面。
+ * 目的：跨线程通信只用队列，所有 lv_* 调用始终保持在 UI 线程（DispTask），
+ * 避免在业务线程直接调 lv_scr_load/setup_scr 这种 LVGL 非线程安全用法导致死机。 */
+extern QueueHandle_t g_update_result_q;  /* 队列项：uint8_t（1=可升级 / 2=不可升级） */
+
 #ifdef __cplusplus
 }
 #endif
