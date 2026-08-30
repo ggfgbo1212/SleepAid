@@ -68,6 +68,16 @@ extern SemaphoreHandle_t wifi_disconnected_sem;  /* WiFi 断开信号量 */
  * 避免在业务线程直接调 lv_scr_load/setup_scr 这种 LVGL 非线程安全用法导致死机。 */
 extern QueueHandle_t g_update_result_q;  /* 队列项：uint8_t（1=可升级 / 2=不可升级） */
 
+/* OTA 下载进度（0~100）：ota_upgrade_task（业务线程）只写这个全局变量，
+ * SettingsPage4Updating 页 tick（UI 线程）读取后 lv_bar_set_value 刷新进度条。
+ * volatile：跨线程单字读写，防编译器把值缓存在寄存器里。 */
+extern volatile int g_ota_progress;
+
+/* OTA 结果队列（队列项：uint8_t，1=升级完成 / 2=升级失败）：
+ * ota_upgrade_task 检测到升级完成/失败后把结果发进队列，
+ * SettingsPage4Updating 页 tick（UI 线程）接收后跳转 UpdateCplt/UpdateError。 */
+extern QueueHandle_t g_ota_result_q;
+
 #ifdef __cplusplus
 }
 #endif

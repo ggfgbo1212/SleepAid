@@ -32,6 +32,13 @@ SemaphoreHandle_t wifi_disconnected_sem = NULL;
  * SettingsPage4CheckUpdate1 页 tick（UI 线程）xQueueReceive 接收并按值跳页。 */
 QueueHandle_t g_update_result_q = NULL;
 
+/* OTA 下载进度（0~100）：ota_upgrade_task 写、Updating 页 tick 读（见 tickscreen.h 注释） */
+volatile int g_ota_progress = 0;
+
+/* OTA 结果队列（队列项：uint8_t，1=完成 / 2=失败）：
+ * ota_upgrade_task 发结果，SettingsPage4Updating 页 tick 接收并按值跳页。 */
+QueueHandle_t g_ota_result_q = NULL;
+
 void tickscreen_init(void)
 {
     if(NULL == wifi_connected_sem)
@@ -53,6 +60,11 @@ void tickscreen_init(void)
         g_update_result_q = xQueueCreate(4, sizeof(uint8_t));   /* 深度4足够：一次检查只发一条结果 */
     if(NULL == g_update_result_q)
         debugprintf("update_result_q create failed\r\n");
+
+    if(NULL == g_ota_result_q)
+        g_ota_result_q = xQueueCreate(4, sizeof(uint8_t));      /* 深度4足够：一次升级只发一条结果 */
+    if(NULL == g_ota_result_q)
+        debugprintf("ota_result_q create failed\r\n");
 }
 
 /* ==================== 各页面周期循环函数（在此填写页面逻辑） ==================== */
@@ -145,9 +157,36 @@ void tick_screen_SettingsPage4CheckUpdate3(void)
 
 void tick_screen_SettingsPage4Updating(void)
 {
-    /* 更新中页：例如刷新 OTA 下载进度条
-     * lv_bar_set_value(guider_ui.SettingsPage4Updating_settings_p4_updating_bar,
-     *                 progress, LV_ANIM_OFF); */
+    /* 1) OTA 结果队列：1=完成→UpdateCplt，2=失败→UpdateError。
+     *    本函数跑在 UI 线程（DispTask），此处 lv_scr_load/setup_scr 不会与渲染冲突。 */
+    uint8_t result = 0;
+    if(NULL != g_ota_result_q && pdTRUE == xQueueReceive(g_ota_result_q, &result, 0))
+    {
+        if(1 == result)    /* 升级完成 */
+        {
+            if(NULL == guider_ui.SettingsPage4UpdateCplt)
+                setup_scr_SettingsPage4UpdateCplt(&guider_ui);
+            lv_scr_load(guider_ui.SettingsPage4UpdateCplt);
+        }
+        else if(2 == result)   /* 升级失败 */
+        {
+            if(NULL == guider_ui.SettingsPage4UpdateError)
+                setup_scr_SettingsPage4UpdateError(&guider_ui);
+            lv_scr_load(guider_ui.SettingsPage4UpdateError);
+        }
+        return;   /* 已跳页，不再刷新进度条 */
+    }
+
+    /* 2) 读取业务线程（ota_upgrade_task）写入的 g_ota_progress 刷新进度条：
+     *    static 缓存上次值，进度没变化就不重绘，避免每轮无谓刷屏。
+     *    初值 -1 强制首次刷新；新一次 OTA 开始时 g_ota_progress 被清零也会触发刷新。 */
+    static int last_progress = -1;
+    if(g_ota_progress != last_progress)
+    {
+        last_progress = g_ota_progress;
+        lv_bar_set_value(guider_ui.SettingsPage4Updating_settings_p4_updating_bar,
+                         g_ota_progress, LV_ANIM_OFF);
+    }
 }
 
 void tick_screen_SettingsPage4UpdateCplt(void)

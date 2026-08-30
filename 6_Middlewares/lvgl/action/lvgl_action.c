@@ -85,8 +85,6 @@ static void check_update_task(void *arg)
 
         /* TODO 不能死等，添加超时机制，超时返回主页面 */
     }
-
-    vTaskDelete(NULL);//任务自杀
 }
 
 /* settings_p4_info_check_update：信息页"检查更新"按钮点击 → 检查是否有新版本（占位打印） */
@@ -129,7 +127,9 @@ void settings_p4_checkupdate2_confirm_back(lv_event_t *e)
 static int ota_upgrade_busy = 0;       /* 升级任务防重入标志 */
 
 /* 升级任务：循环"申请固件分片→烧写flash→MD5校验"，校验通过跳 SettingsPage4UpdateCplt，失败跳 SettingsPage4UpdateError。
- * 优先级取 3（低于 DispTask 的 4），lv_scr_load 只在 DispTask 阻塞 vTaskDelay 时被调度，与渲染不冲突；
+ * 本任务不直接调 LVGL（LVGL 非线程安全）：
+ *   - 下载进度只写全局 g_ota_progress，SettingsPage4Updating 页 tick（UI 线程）读取后 lv_bar_set_value；
+ *   - 升级完成/失败/固件太大只把结果(1完成/2失败)发进 g_ota_result_q 队列，由 UI 线程 tick 接收后 lv_scr_load。
  * 轮询 isDownload 时必须有 vTaskDelay 让出 CPU，否则低优先级的 mqtt_task 收不到回包填 isDownload。 */
 static void ota_upgrade_task(void *arg)
 {
@@ -144,6 +144,8 @@ static void ota_upgrade_task(void *arg)
 
     /* Flash 驱动初始化：启用 FLASH 中断，FlashDrvWrite/Erase 靠中断回调等待写完成 */
     FlashDrvInit();
+
+    g_ota_progress = 0;   /* 新一次升级开始：进度归零，UI 线程据此把进度条刷回起点 */
 
     while(1)
     {
@@ -161,9 +163,10 @@ static void ota_upgrade_task(void *arg)
                 if(Gradeinfo->fileSize >= OTA_APP_SIZE)
                 {
                     debugprintf("firmware size %d >= OTA_APP_SIZE(112KB), upgrade fail\r\n", Gradeinfo->fileSize);
-                    if(NULL == guider_ui.SettingsPage4UpdateError)
-                        setup_scr_SettingsPage4UpdateError(&guider_ui);
-                    lv_scr_load(guider_ui.SettingsPage4UpdateError);
+                    /* 不直接调 LVGL：把结果(2=失败)发进队列，UI 线程跳转 UpdateError */
+                    uint8_t result = 2;
+                    if(NULL != g_ota_result_q)
+                        xQueueSend(g_ota_result_q, &result, 0);
                     ota_upgrade_busy = 0;
                     vTaskDelete(NULL);
                 }
@@ -210,10 +213,10 @@ static void ota_upgrade_task(void *arg)
                     int progress = (otadata->fileLength - remain_size) * 100 / otadata->fileLength;//计算下载进度
                     // MQTTOTA_ImportProgress(1, (unsigned char)progress, DeviceName);  // 云端进度上报暂不启用
 
-                    //进度条联动：更新 SettingsPage4Updating 页面的进度条（页面已在升级开始时加载，
-                    //bar 默认范围 0~100 与 progress 直接对应；任务优先级 3 < DispTask 4，DispTask 阻塞在
-                    //vTaskDelay 时才被调度，此时调 lv_bar_set_value 不会与渲染冲突）
-                    lv_bar_set_value(guider_ui.SettingsPage4Updating_settings_p4_updating_bar, progress, LV_ANIM_OFF);
+                    //进度条联动：不直接调 lv_bar_set_value（LVGL 非线程安全），
+                    //只把进度写进全局 g_ota_progress，由 SettingsPage4Updating 页 tick（UI 线程）
+                    //读取后 lv_bar_set_value 刷新进度条（bar 默认范围 0~100 与 progress 直接对应）
+                    g_ota_progress = progress;
 
                     //更新md5值
                     MD5_Update(&ctx, otadata->data, otadata->bSize);
@@ -257,10 +260,10 @@ static void ota_upgrade_task(void *arg)
                     //上报新版本号
                     // MQTTOTA_InformVersion(1, (const char*)Gradeinfo->version, DeviceName);
 
-                    //跳转页面——SettingsPage4UpdateCplt（升级完成）
-                    if(NULL == guider_ui.SettingsPage4UpdateCplt)
-                        setup_scr_SettingsPage4UpdateCplt(&guider_ui);
-                    lv_scr_load(guider_ui.SettingsPage4UpdateCplt);
+                    //升级完成：不直接调 LVGL，把结果(1=完成)发进队列，UI 线程跳 UpdateCplt
+                    uint8_t result = 1;
+                    if(NULL != g_ota_result_q)
+                        xQueueSend(g_ota_result_q, &result, 0);
                     ota_upgrade_busy = 0;
                     vTaskDelete(NULL);//任务自杀
                 }
@@ -268,10 +271,10 @@ static void ota_upgrade_task(void *arg)
                 {
                     debugprintf("md5 Not Consistent, upgrade fail\r\n");
 
-                    //跳转页面——SettingsPage4UpdateError（升级失败）
-                    if(NULL == guider_ui.SettingsPage4UpdateError)
-                        setup_scr_SettingsPage4UpdateError(&guider_ui);
-                    lv_scr_load(guider_ui.SettingsPage4UpdateError);
+                    //升级失败：不直接调 LVGL，把结果(2=失败)发进队列，UI 线程跳 UpdateError
+                    uint8_t result = 2;
+                    if(NULL != g_ota_result_q)
+                        xQueueSend(g_ota_result_q, &result, 0);
                     ota_upgrade_busy = 0;
                     vTaskDelete(NULL);//任务自杀
                 }
