@@ -77,6 +77,8 @@ static void check_update_task(void *arg)
         
         printf("check_update_task running\r\n");
         vTaskDelay(pdMS_TO_TICKS(200));//回包还没到，等一会儿再查
+
+        /* TODO 不能死等，添加超时机制，超时返回主页面 */
     }
 
     vTaskDelete(NULL);//任务自杀
@@ -341,6 +343,15 @@ void settings_updatecplt_confirm_btn_event(lv_event_t *e)
     }
 
     jump_to_application(OTA_APP_ADDR);
+}
+
+/* settings_updateerror_confirm_btn_event：UpdateError"确认"按钮点击 → 返回信息页 */
+void settings_updateerror_confirm_btn_event(lv_event_t *e)
+{
+    (void)e;
+    if(NULL == guider_ui.SettingsPage4Info)
+        setup_scr_SettingsPage4Info(&guider_ui);
+    lv_scr_load(guider_ui.SettingsPage4Info);
 }
 
 
