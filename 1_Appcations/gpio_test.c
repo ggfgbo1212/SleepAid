@@ -135,12 +135,6 @@ static void mqtt_task(void *arg)
     MQTTOTA_Subdownload_reply();// 设备端订阅服务器下发bin文件分片
     
     MQTTOTA_SubFirmwareReply();// 设备端订阅服务器返回升级信息对应的应答topic
-    
-    //MQTTOTA_ImportProgress();//上报下载进度
-    HAL_Delay(1000);
-    printf("ready to get data\r\n");
-    //MQTTOTA_GetFirmwareBin(1, 1024, 0);
-    
 
     
 	while (++count)
@@ -231,39 +225,6 @@ void app_test()
     UART_DevRegis();//全局串口设备注册
     IIC_DevRegis();//全局IIC设备注册
     SPI_DevRegis();//全局SPI设备注册
-
-
-
-//    struct GPIODev* GPIODev = GPIODev_Find("LED1");
-//    if(GPIODev != NULL)
-//    {
-//        GPIODev->Init(GPIODev);
-//        GPIODev->Write(GPIODev, 1);
-//    }
-//    
-//    struct GPIODev* GPIODev1 = GPIODev_Find("LED2");
-//    if(GPIODev1 != NULL)
-//    {
-//        GPIODev1->Init(GPIODev1);
-//        GPIODev1->Write(GPIODev1, 1);
-//    }
-//    
-//    struct GPIODev* GPIODev2 = GPIODev_Find("LED3");
-//    if(GPIODev2 != NULL)
-//    {
-//        GPIODev2->Init(GPIODev2);
-//        GPIODev2->Write(GPIODev2, 1);
-//    }
-//     debugprintf("ready\r\n");
-//     jump_to_application(0x08064000);
-//     while(1)
-//     {
-//         
-//     }
-
-
-
-
 
 
     /* 创建 LVGL 显示任务（软件定时器驱动节拍，任务内做 lv_init + lv_port_disp_init） */
