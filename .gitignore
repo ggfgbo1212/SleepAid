@@ -1,5 +1,7 @@
 # ===== Keil MDK / uVision 构建产物 =====
 MDK-ARM/basic/
+# 编译输出的固件
+MDK-ARM/bin/
 MDK-ARM/build_log.txt
 MDK-ARM/build_utf8.txt
 MDK-ARM/*.uvguix.*
@@ -15,6 +17,9 @@ MDK-ARM/RTE/
 6_Middlewares/lvgl/SleepAid_UI/lvgl-simulator/build/
 # SDL2 预编译库（35MB，官网可重新下载）
 6_Middlewares/lvgl/SleepAid_UI/lvgl-simulator/SDL2/
+
+# ===== Eclipse CDT 自动生成的构建文件（paho.mqtt.embedded-c）=====
+6_Middlewares/paho.mqtt.embedded-c-master/Debug/
 
 # ===== STM32CubeMX 生成元数据 =====
 .mxproject
