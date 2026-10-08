@@ -339,7 +339,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../1_Appcations;../2_Devices;../3_ModuleDrivers;../4_include;../5_libs;../2_Devices/w25q;../2_Devices/st7789;../2_Devices/touch;../6_Middlewares/cjon;../6_Middlewares/MD5;../2_Devices/wifi;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTPacket/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src/FreeRTOS;../6_Middlewares/lvgl/action;../6_Middlewares/lvgl/tickscreen;../6_Middlewares/lvgl/SleepAid_UI/lvgl;../6_Middlewares/lvgl/SleepAid_UI/custom;../6_Middlewares/lvgl/SleepAid_UI/generated;../6_Middlewares/lvgl/SleepAid_UI/generated/guider_fonts;../6_Middlewares/lvgl/SleepAid_UI;..\6_Middlewares\MD5</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Middlewares/Third_Party/FreeRTOS/Source/include;../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2;../Middlewares/Third_Party/FreeRTOS/Source/portable/RVDS/ARM_CM4F;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../1_Appcations;../2_Devices;../2_Devices/at24cxx;../3_ModuleDrivers;../4_include;../5_libs;../2_Devices/w25q;../2_Devices/st7789;../2_Devices/touch;../6_Middlewares/cjon;../6_Middlewares/MD5;../2_Devices/wifi;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTPacket/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src;../6_Middlewares/paho.mqtt.embedded-c-master/MQTTClient-C/src/FreeRTOS;../6_Middlewares/lvgl/action;../6_Middlewares/lvgl/tickscreen;../6_Middlewares/lvgl/SleepAid_UI/lvgl;../6_Middlewares/lvgl/SleepAid_UI/custom;../6_Middlewares/lvgl/SleepAid_UI/generated;../6_Middlewares/lvgl/SleepAid_UI/generated/guider_fonts;../6_Middlewares/lvgl/SleepAid_UI;..\6_Middlewares\MD5</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -442,6 +442,11 @@
               <FileName>dev_w25q64.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\2_Devices\w25q\dev_w25q64.c</FilePath>
+            </File>
+            <File>
+              <FileName>dev_at24c02.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\2_Devices\at24cxx\dev_at24c02.c</FilePath>
             </File>
             <File>
               <FileName>dev_wifi.c</FileName>

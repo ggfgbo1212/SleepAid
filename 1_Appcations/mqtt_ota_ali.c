@@ -126,7 +126,6 @@ int MQTTOTA_InformVersion(const unsigned int msgId, const char *version, const c
 //    "message":"success"
 //}
 // 解析服务器推送的升级包信息的消息处理回调函数
-//TODO 解析MD5值
 static void GetUpgradeMsgHandler(MessageData* msgData)
 {
     char *string = (char *)msgData->message->payload;

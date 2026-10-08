@@ -20,7 +20,7 @@ void jump_to_application(unsigned int app_addr)
          * 看起来像页面卡死。放这里是因为 GPIOB 时钟此刻还开着（HAL_RCC_DeInit 之前），
          * 直接写引脚有效；且 ODR 电平是锁存的——后面时钟树复位后 PB1 仍保持低电平，
          * 背光持续熄灭。新固件初始化 LCD 时（dev_st7789 的 lcd_led(1)）会重新点亮背光。 */
-        HAL_GPIO_WritePin(LCD_LED_GPIO_Port, LCD_LED_Pin, GPIO_PIN_RESET);
+        // HAL_GPIO_WritePin(LCD_LED_GPIO_Port, LCD_LED_Pin, GPIO_PIN_RESET);
 
 
         /* ==================== 复位 bootloader 遗留状态 → "类上电"交接（工程师建议） ====================

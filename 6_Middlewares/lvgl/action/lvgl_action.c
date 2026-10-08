@@ -29,13 +29,17 @@
 #include <string.h>   /* strncmp */
 #include "errno.h"    /* ESUCCESS */
 #include "md5.h"      /* MD5_Init / MD5_Update / MD5_Final / MD5_HashToHex */
-#include "drv_flash.h"/* FlashDrvInit / FlashDrvErase / FlashDrvWrite */
+#include "drv_flash.h"/* FlashDrvInit / FlashDrvErase / FlashDrvWrite / FlashDrvRead */
+#include "ota_info.h" /* FirmwareInfo / EEPROM 布局 */
+#include "dev_at24cxx.h"/* GetAT24C02Device：固件信息记录落盘 */
+#include "dev_w25qx.h"/* GetW25Q64Device：升级前把旧 APP 备份到外部 flash */
 
 #include "FreeRTOS.h"
 #include "task.h"      /* xTaskCreate / vTaskDelay / vTaskDelete */
 #include "queue.h"     /* xQueueSend：检查更新结果发到 UI 线程队列 */
 #include "tickscreen.h"/* g_update_result_q：检查更新结果队列 */
 #include "iap.h"
+#include "timers.h"
 
 /* 全局 UI 对象：各屏控件句柄集中存放，外部模块通过 extern 访问 */
 lv_ui guider_ui;
@@ -117,14 +121,156 @@ void settings_p4_checkupdate2_confirm_back(lv_event_t *e)
 
 /* ==================== OTA 升级任务 ==================== */
 #define OTA_DOWNLOAD_SIZE   1024       /* 每次申请固件分片的最大字节数 */
-/* 新固件烧写地址：F407VET6 共 512KB（0x08000000~0x08080000），预留前 400KB 给 bootloader
- * （当前 bootloader 固件实际约 375.5KB，留点余量），新固件区 = 0x08064000~0x08080000，共 112KB。
- * 注意 0x08064000 在扇区7内、不在扇区边界：擦除会连带擦掉扇区内 0x08060000~0x08063FFF 的
- * 空闲预留区（bootloader 止于 0x0805E000，不受影响），新固件必须 ≤ 112KB。 */
-#define OTA_APP_ADDR        0x08064000 /* 新固件烧写地址（bootloader 预留 400KB） */
-#define OTA_APP_SIZE        0x1C000    /* 新固件区大小：512KB - 400KB = 112KB，超了无法烧写 */
+/* OTA_APP_ADDR / OTA_APP_SIZE / W25Q64_BACKUP_ADDR 三个存放位置常量已上移 ota_info.h 共享
+ * （bootloader 的开机自检 gpio_test.c 也要用），本文件经 #include "ota_info.h" 拿到。 */
+#define OTA_BACKUP_CHUNK    256        /* 备份分块 = W25Q64 页大小，天然对齐页和扇区边界 */
 
 static int ota_upgrade_busy = 0;       /* 升级任务防重入标志 */
+
+#define OTA_TIMEOUT_SEC     60      /* 升级超时时间（秒）：擦除+下载全程合计，超时强制判失败 */
+
+/* 超时定时器句柄：文件作用域（不能是任务里的局部变量，否则任务一自杀句柄就丢）；
+ * 删完必须置 NULL，否则下一次升级会拿一块已被释放的句柄去 xTimerStart */
+static TimerHandle_t otaTimer = NULL;
+
+static volatile int ota_time = 0;        /* 已等待秒数：定时器服务任务写、升级任务读，故 volatile */
+static volatile int isota_timeout = 0;   /* 超时标志：同上，跨任务读写 */
+
+/* 超时看门狗回调：FreeRTOS 软件定时器每 1s 回调一次（configTICK_RATE_HZ = 1000）。
+ * 本回调跑在定时器服务任务里，不要在这里碰 flash / LVGL / 升级任务的局部状态，
+ * 只置标志，由 ota_upgrade_task 在主循环顶部统一收尾。 */
+static void ota_timer_cb(TimerHandle_t handle)
+{
+    (void)handle;
+
+    ota_time += 1;
+    if(ota_time >= OTA_TIMEOUT_SEC)  /* 1 分钟还没结束 */
+    {
+        isota_timeout = 1;
+    }
+}
+
+/* 升级结束统一清理：所有出口都必须调它。
+ * 不清理的话定时器会一直以 1Hz 跑下去，ota_time 继续累加，
+ * 导致下一次升级刚创建就吃到上一次遗留的超时标志，第一轮直接判失败。 */
+static void ota_timer_deinit(void)
+{
+    if(NULL != otaTimer)
+    {
+        xTimerStop(otaTimer, 0);
+        xTimerDelete(otaTimer, pdMS_TO_TICKS(100));  /* 句柄内存由定时器服务任务异步释放 */
+        otaTimer = NULL;
+    }
+    ota_time = 0;
+    isota_timeout = 0;
+}
+
+/* 升级结束统一出口：清定时器 → 上报结果给 UI 线程 → 任务自杀。
+ * 成功/失败/超时/固件太大四条路都走这里，避免漏掉某条出口导致定时器残留。
+ * 注意 vTaskDelete(NULL) 之后不会返回。 */
+static void ota_upgrade_finish(uint8_t result)
+{
+    ota_timer_deinit();
+
+    /* 不直接调 LVGL（非线程安全）：结果发进队列，UI 线程 tick 收到后 lv_scr_load */
+    if(NULL != g_ota_result_q)
+        xQueueSend(g_ota_result_q, &result, 0);
+
+    ota_upgrade_busy = 0;
+    vTaskDelete(NULL);
+}
+
+/* EEPROM 里那两条固件信息记录（AT24C02，布局见 ota_info.h）不另外封装函数，
+ * 就在下面两处 TODO 里直接调驱动的 Read/Write —— 整条 64 字节读写，没有别的逻辑。 */
+
+/* 升级前备份：把内部 flash 里 [OTA_APP_ADDR, OTA_APP_ADDR+size) 的旧 APP 搬到外部 flash，
+ * 顺带算出这段镜像的 md5 从 backup_md5 带出来（33 字节：32 hex + '\0'）。
+ * 返回 ESUCCESS = 写完并且回读校验通过；失败只影响"能不能回滚"，不中断升级。 */
+static int fw_backup_to_w25q(unsigned int size, char *backup_md5)
+{
+    /* 4 字节对齐：FlashDrvRead 内部按 uint64_t/uint32_t 整体搬运，裸 uint8_t 缓冲区可能触发
+     * M4 的对齐异常；分块起点 OTA_APP_ADDR + n*256 天然 4 字节对齐 */
+    static uint32_t buf[OTA_BACKUP_CHUNK / 4];
+    W25QDevice *pq = GetW25Q64Device();
+    MD5_CTX ctx;
+    uint8_t hash[MD5_HASH_LEN];
+    char verify_md5[MD5_HASH_LEN * 2 + 1];
+    unsigned int off, sectors, done;
+
+    if(NULL == pq || NULL == backup_md5)          return -EINVAL;
+    if(0 == size || size > OTA_APP_SIZE)          return -EINVAL;  /* 没记录 or 越界，不备份 */
+    if(size > W25Q64_SIZE - W25Q64_BACKUP_ADDR)   return -EINVAL;
+
+    /* W25Q64 平时没人用，这里补一次初始化（内部读 JEDEC ID 校验型号，不是 0xEF4017 会失败） */
+    if(ESUCCESS != pq->Init(pq))
+    {
+        debugprintf("W25Q64 init FAIL\r\n");
+        return -EIO;
+    }
+
+    /* W25Q64Write 内部不做擦除（那段被注释掉了），必须自己先把覆盖到的扇区擦干净 */
+    sectors = (size + W25Q64_SECTOR_SIZE - 1) / W25Q64_SECTOR_SIZE;
+    if(ESUCCESS != pq->Erase(pq, W25Q64_BACKUP_ADDR, sectors))
+    {
+        debugprintf("W25Q64 erase %d sectors FAIL\r\n", sectors);
+        return -EIO;
+    }
+
+    /* 内部 flash → 外部 flash，边搬边算这段镜像的 md5 */
+    MD5_Init(&ctx);
+    for(off = 0; off < size; off += OTA_BACKUP_CHUNK)
+    {
+        unsigned int chunk = (size - off >= OTA_BACKUP_CHUNK) ? OTA_BACKUP_CHUNK : (size - off);
+
+        if((int)chunk != FlashDrvRead(OTA_APP_ADDR + off, (unsigned char *)buf, chunk))
+        {
+            debugprintf("read internal flash @0x%x FAIL\r\n", OTA_APP_ADDR + off);
+            return -EIO;
+        }
+        MD5_Update(&ctx, (uint8_t *)buf, chunk);
+
+        if((int)chunk != pq->Write(pq, W25Q64_BACKUP_ADDR + off, (unsigned char *)buf, chunk))
+        {
+            debugprintf("W25Q64 write @0x%x FAIL\r\n", W25Q64_BACKUP_ADDR + off);
+            return -EIO;
+        }
+
+        /* 每搬完一个扇区让一次 CPU：备份最多 112KB，全程霸着 CPU 会把 UI/MQTT 任务饿死 */
+        done = off + chunk;
+        if(0 == (done % W25Q64_SECTOR_SIZE))    vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    MD5_Final(&ctx, hash);
+    MD5_HashToHex(hash, backup_md5);
+
+    /* 回读校验：把刚写进 W25Q64 的再读回来重算一遍 md5，和写进去时算的比。
+     * 两边都是本工程 md5.c 算的、同一个算法，所以不受它填充分支的影响。 */
+    MD5_Init(&ctx);
+    for(off = 0; off < size; off += OTA_BACKUP_CHUNK)
+    {
+        unsigned int chunk = (size - off >= OTA_BACKUP_CHUNK) ? OTA_BACKUP_CHUNK : (size - off);
+
+        if((int)chunk != pq->Read(pq, W25Q64_BACKUP_ADDR + off, (unsigned char *)buf, chunk))
+        {
+            debugprintf("W25Q64 read back @0x%x FAIL\r\n", W25Q64_BACKUP_ADDR + off);
+            return -EIO;
+        }
+        MD5_Update(&ctx, (uint8_t *)buf, chunk);
+
+        done = off + chunk;
+        if(0 == (done % W25Q64_SECTOR_SIZE))    vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    MD5_Final(&ctx, hash);
+    MD5_HashToHex(hash, verify_md5);
+
+    if(0 != strncmp(verify_md5, backup_md5, MD5_HASH_LEN * 2))
+    {
+        debugprintf("backup verify FAIL: readback=%s written=%s\r\n", verify_md5, backup_md5);
+        return -EIO;
+    }
+
+    debugprintf("backup %d bytes to W25Q64@0x%x OK, md5=%s\r\n", size, W25Q64_BACKUP_ADDR, backup_md5);
+    return ESUCCESS;
+}
 
 /* 升级任务：循环"申请固件分片→烧写flash→MD5校验"，校验通过跳 SettingsPage4UpdateCplt，失败跳 SettingsPage4UpdateError。
  * 本任务不直接调 LVGL（LVGL 非线程安全）：
@@ -147,8 +293,73 @@ static void ota_upgrade_task(void *arg)
 
     g_ota_progress = 0;   /* 新一次升级开始：进度归零，UI 线程据此把进度条刷回起点 */
 
+    /* ============ 升级前：旧 APP 备份到外部 flash + 当前固件信息写 EEPROM ============
+     * 位置不能动：这里在 while(1) 之前，也就是在 step 1 擦除旧 APP 之前（擦完就备份不到了），
+     * 同时也在超时定时器创建之前（搬 112KB 要 1 秒左右，不能算进那 60 秒预算）。
+     * 备份/写 EEPROM 失败一律只告警、继续升级：这是辅助功能，不该把 OTA 卡死。 */
+    {
+        AT24CXXDevice *ptAT24C02 = GetAT24C02Device();
+        FirmwareInfo   curinfo;
+
+        memset(&curinfo, 0, sizeof(curinfo));   /* 连 reserved 一起清，别把栈上的脏字节写进 EEPROM */
+
+        /* 先读 EEPROM 0x00 那条：出厂已按实际固件写好，之后每次升级成功刷新，描述的就是现在装着的固件 */
+        if(NULL != ptAT24C02)
+            ptAT24C02->Read(ptAT24C02, EEPROM_ADDR_NEW_FW, (unsigned char *)&curinfo, sizeof(curinfo));
+
+        if(curinfo.fileSize > 0 && curinfo.fileSize <= OTA_APP_SIZE)
+        {
+            char verbuf[sizeof(curinfo.version) + 1];
+            char md5buf[sizeof(curinfo.md5) + 1];
+            char backup_md5[MD5_HASH_LEN * 2 + 1];
+
+            /* 定长字段可能没有 '\0'，打印前自己补一个再 %s */
+            memcpy(verbuf, curinfo.version, sizeof(curinfo.version));
+            verbuf[sizeof(curinfo.version)] = '\0';
+            memcpy(md5buf, curinfo.md5, sizeof(curinfo.md5));
+            md5buf[sizeof(curinfo.md5)] = '\0';
+            debugprintf("current fw: ver=%s size=%d md5=%s\r\n", verbuf, curinfo.fileSize, md5buf);
+
+            /* 长度就取记录里的 fileSize；备份成功就用现场算出的真摘要覆盖记录里的云端 md5 */
+            if(ESUCCESS == fw_backup_to_w25q(curinfo.fileSize, backup_md5))
+                memcpy(curinfo.md5, backup_md5, sizeof(curinfo.md5));
+            else
+                debugprintf("backup old app FAIL, keep upgrade going\r\n");
+        }
+
+        /* 当前固件信息写到 EEPROM 0x40 */
+        if(NULL == ptAT24C02
+           || (unsigned int)sizeof(curinfo) != ptAT24C02->Write(ptAT24C02, EEPROM_ADDR_CUR_FW,
+                                                                (unsigned char *)&curinfo, sizeof(curinfo)))
+            debugprintf("write current fw info to EEPROM FAIL\r\n");
+    }
+
+    /* 升级超时看门狗：先清掉上一次升级的残留（otaTimer/ota_time/isota_timeout 都是文件作用域
+     * 静态变量，上次任务自杀时不会自动归零），再重新创建并启动。
+     * pdTRUE = 自动重载，每秒回调一次，累计到 OTA_TIMEOUT_SEC 秒置超时标志。 */
+    ota_timer_deinit();
+    otaTimer = xTimerCreate("OTA Timeout", pdMS_TO_TICKS(1000), pdTRUE, NULL, ota_timer_cb);
+    if(NULL == otaTimer)
+    {
+        /* 堆不够：失去超时保护，但升级流程继续走（只是卡住时没人兜底） */
+        debugprintf("xTimerCreate OTA Timeout FAIL, run without timeout guard\r\n");
+    }
+    else
+    {
+        xTimerStart(otaTimer, 0);
+    }
+
     while(1)
     {
+        /* 超时兜底：1 分钟还没走完升级流程，直接按失败收尾（UI 跳 UpdateError 页）。
+         * 不复用 step 5：那是"下载完成→MD5 校验"，超时时数据只有半截、ctx 甚至还没 MD5_Init，
+         * 算出来的 MD5 必然不匹配，日志会误报成 md5 Not Consistent，掩盖真实原因。 */
+        if(isota_timeout == 1)
+        {
+            debugprintf("OTA timeout(%d s), force fail\r\n", OTA_TIMEOUT_SEC);
+            ota_upgrade_finish(2);
+        }
+
         switch(step)
         {
             case 1:  /* 点击"立即升级"后直接进入：准备下载参数、擦除目标扇区 */
@@ -163,12 +374,8 @@ static void ota_upgrade_task(void *arg)
                 if(Gradeinfo->fileSize >= OTA_APP_SIZE)
                 {
                     debugprintf("firmware size %d >= OTA_APP_SIZE(112KB), upgrade fail\r\n", Gradeinfo->fileSize);
-                    /* 不直接调 LVGL：把结果(2=失败)发进队列，UI 线程跳转 UpdateError */
-                    uint8_t result = 2;
-                    if(NULL != g_ota_result_q)
-                        xQueueSend(g_ota_result_q, &result, 0);
-                    ota_upgrade_busy = 0;
-                    vTaskDelete(NULL);
+                    /* 走统一出口：内部会先删掉超时定时器再上报结果，不能直接 vTaskDelete */
+                    ota_upgrade_finish(2);
                 }
 
                 //初始化md5
@@ -241,48 +448,60 @@ static void ota_upgrade_task(void *arg)
                 MD5_Final(&ctx, hash);            //完成计算，输出哈希值
                 MD5_HashToHex(hash, hex_str);     //将16字节哈希转为32位十六进制字符串
                 debugprintf("local  md5:%s\r\n", hex_str);
-                debugprintf("server md5:%s\r\n", Gradeinfo->md5);
+                char smd5buf[MD5_HASH_LEN * 2 + 1];   /* 云端 md5 不保证带 '\0'，直接 %s 会越界 */
+                memcpy(smd5buf, Gradeinfo->md5, MD5_HASH_LEN * 2);
+                smd5buf[MD5_HASH_LEN * 2] = '\0';
+                debugprintf("server md5:%s\r\n", smd5buf);
 
                 //strncmp 比较满 32 位，避免服务端 md5 未以 '\0' 结尾时 strcmp 越界
                 if(0 == strncmp(hex_str, Gradeinfo->md5, MD5_HASH_LEN * 2))//MD5一致
                 {
                     debugprintf("md5 Consistent, upgrade success\r\n");
 
-                    //TODO 将新固件版本信息写入 EEPROM（AT24C02 驱动尚未加入，后续补充）：
-                    //  记录版本号、CRC、APP起始地址、固件大小，供 bootloader 重启后校验/跳转使用
-                    //firmwareInfo CurrentFirmWareInfo;
-                    //memcpy(CurrentFirmWareInfo.version, Gradeinfo->version, sizeof(Gradeinfo->version));
-                    //CurrentFirmWareInfo.crc = GetCRC((unsigned char*)Gradeinfo->version, sizeof(Gradeinfo->version));
-                    //CurrentFirmWareInfo.code_addr = OTA_APP_ADDR;
-                    //CurrentFirmWareInfo.code_size = Gradeinfo->fileSize;
-                    //ptAT24C02->Write(ptAT24C02, 0, &CurrentFirmWareInfo.version[0], sizeof(firmwareInfo));
+                    /* 将新固件版本信息写入 EEPROM 0 起始地址：
+                     * 下次升级时，这条记录就是"设备当前跑的固件"，用来定备份长度 */
+                    {
+                        AT24CXXDevice *ptAT24C02 = GetAT24C02Device();
+                        FirmwareInfo   newinfo;
+                        char           verbuf[sizeof(newinfo.version) + 1];
+
+                        memset(&newinfo, 0, sizeof(newinfo));
+                        newinfo.fileSize = Gradeinfo->fileSize;
+                        /* 都按定长拷：云端下发的 version/md5 不保证带 '\0'，strcpy 会越界 */
+                        memcpy(newinfo.version, Gradeinfo->version, sizeof(newinfo.version));
+                        memcpy(newinfo.md5,     Gradeinfo->md5,     sizeof(newinfo.md5));
+
+                        memcpy(verbuf, newinfo.version, sizeof(newinfo.version));
+                        verbuf[sizeof(newinfo.version)] = '\0';   /* 补 '\0' 再 %s */
+
+                        if(NULL != ptAT24C02
+                           && (unsigned int)sizeof(newinfo) == ptAT24C02->Write(ptAT24C02, EEPROM_ADDR_NEW_FW,
+                                                                               (unsigned char *)&newinfo, sizeof(newinfo)))
+                            debugprintf("new fw info saved to EEPROM: ver=%s size=%d\r\n",
+                                        verbuf, newinfo.fileSize);
+                        else
+                            debugprintf("write new fw info to EEPROM FAIL\r\n");
+                    }
 
                     //上报新版本号
                     // MQTTOTA_InformVersion(1, (const char*)Gradeinfo->version, DeviceName);
 
-                    //升级完成：不直接调 LVGL，把结果(1=完成)发进队列，UI 线程跳 UpdateCplt
-                    uint8_t result = 1;
-                    if(NULL != g_ota_result_q)
-                        xQueueSend(g_ota_result_q, &result, 0);
-                    ota_upgrade_busy = 0;
-                    vTaskDelete(NULL);//任务自杀
+                    //升级完成：走统一出口（清定时器 + 把结果(1=完成)发进队列 + 任务自杀）
+                    ota_upgrade_finish(1);
                 }
                 else//MD5不一致
                 {
                     debugprintf("md5 Not Consistent, upgrade fail\r\n");
 
-                    //升级失败：不直接调 LVGL，把结果(2=失败)发进队列，UI 线程跳 UpdateError
-                    uint8_t result = 2;
-                    if(NULL != g_ota_result_q)
-                        xQueueSend(g_ota_result_q, &result, 0);
-                    ota_upgrade_busy = 0;
-                    vTaskDelete(NULL);//任务自杀
+                    //升级失败：走统一出口（清定时器 + 把结果(2=失败)发进队列 + 任务自杀）
+                    ota_upgrade_finish(2);
                 }
                 break;
             }
             default:
-                ota_upgrade_busy = 0;
-                vTaskDelete(NULL);
+                /* 正常流程走不到这里（step 只被赋 1/2/3/5）；真到了说明状态机被写坏，
+                 * 按失败收尾并清定时器，别把 UI 永远留在"更新中"页 */
+                ota_upgrade_finish(2);
                 break;
         }
     }
